@@ -41,6 +41,25 @@ All headers contain valid Base64-encoded JSON strings. This encoding ensures com
 
 Whether funds move **onchain** in the same HTTP round trip depends on the **scheme**: **`exact`** and **`upto`** typically settle immediately, while **`batch-settlement`** confirms the payment authorization up front and redeems value **onchain** later according to the network binding (see **[Batch settlement](/schemes/batch-settlement)**).
 
+### Browser clients
+
+None of the three payment headers (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, `PAYMENT-RESPONSE`) are CORS-safelisted. A cross-origin `fetch()` from a browser therefore cannot read `PAYMENT-REQUIRED` or `PAYMENT-RESPONSE` unless the server exposes them, and cannot send `PAYMENT-SIGNATURE` unless the preflight allows it.
+
+A resource server intended to be reachable from a browser **should**:
+
+- Send `Access-Control-Allow-Origin` for the calling origin on the 402 response itself. Without it the browser hides the entire response, and nothing else in this list has any effect.
+- Name `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE` in `Access-Control-Expose-Headers`, merged with any value already present rather than replacing it. A value of `*` does not cover them on a credentialed request.
+- Name `PAYMENT-SIGNATURE` and `Content-Type` in `Access-Control-Allow-Headers`. `Content-Type` is safelisted only for form and plain-text values, so a payment request with a JSON body triggers the preflight on `Content-Type` before any payment header is considered — omit it and the client never reaches the 402 at all. A value of `*` does not cover either header on a credentialed request.
+- Name the v1 spellings too, if it still serves v1 clients, each in the list matching its direction: `X-PAYMENT` in `Access-Control-Allow-Headers` (client sends it) and `X-PAYMENT-RESPONSE` in `Access-Control-Expose-Headers` (server returns it). A dual-version endpoint that names only one spelling fails silently for the other version's clients.
+- Answer the preflight `OPTIONS` without requiring payment, and send a non-trivial `Access-Control-Max-Age`. A priced resource otherwise pays a preflight round trip on every cross-origin call.
+- Send `Vary: Origin` if it reflects an origin rather than sending `*`, and keep the 402 out of shared caches.
+
+**Diagnosing failures:** Omitting the expose list produces a 402 whose price the client cannot read — the response arrives, the header is hidden, and the client reports a parse failure on an apparently empty challenge. Omitting the allow list produces a payment the client cannot send — the browser refuses the retry at the preflight and reports a network error with no status. Neither message names CORS, and an unpaid probe with `curl` passes either way, so neither is diagnosable from the client side alone.
+
+Test the preflight against the request the client's SDK actually sends, not just against the three protocol headers. Client SDKs may add extra request headers; a browser lists every non-safelisted name in `Access-Control-Request-Headers`, so an allow list naming only the protocol headers will refuse a retry that includes any additional header.
+
+A resource server **may** instead refuse browser origins on a paid route. This is a choice about who may call the resource, not a payment control: CORS governs whether a page may read a response, while the decision to spend belongs to whatever holds the payer's signing key.
+
 ### Summary
 
 HTTP 402 is the foundation of the x402 protocol, enabling services to declare payment requirements directly within HTTP responses. It:
